@@ -1,0 +1,166 @@
+image: mygardenwatcher/flutter:1.12.13
+
+
+stages:
+  - test
+  - build
+  - deploy
+#  - test_deployment
+#  - productive_deployment
+#  - notification
+
+variables:
+  LC_ALL: "en_US.UTF-8"
+  LANG: "en_US.UTF-8"
+
+before_script:
+  #- apt-get update -qq
+  #- apt-get install -qq git
+  - yum install which -y
+  - 'which ssh-agent || ( apt-get install -qq openssh-client )'
+  - eval $(ssh-agent -s)
+  - mkdir -p ~/.ssh
+  - chmod 700 ~/.ssh
+  - echo "$SSH_PUBLIC_KEY" | tr -d '\r' > ~/.ssh/id_rsa.pub
+  - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+  - chmod 600 ~/.ssh/id_rsa.pub
+  - chmod 700 ~/.ssh/id_rsa
+  - ssh-add ~/.ssh/id_rsa
+  #- echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+  - ssh-keyscan -p 4242 -H '51.38.38.139' >> ~/.ssh/known_hosts
+  - ssh-keyscan -H 'gitlab.com' >> ~/.ssh/known_hosts
+  - ssh-keyscan -p 4242 51.38.38.139 | sort -u - ~/.ssh/known_hosts -o ~/.ssh/known_hosts
+  - '[[ -f /.dockerenv ]] && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config'
+
+
+test:flutter:
+  #extends: .android_docker_image
+  stage: test
+  script:
+    - flutter test --coverage
+    - genhtml coverage/lcov.info --output=coverage
+  artifacts:
+    paths:
+      - coverage/
+    expire_in: 5 days
+
+build:android:
+  stage: build
+  #extends: .android_key_store
+  script: flutter build apk --debug #--build-number=$CI_PIPELINE_ID
+  artifacts:
+    paths:
+      - build/app/outputs/apk/debug/app-debug.apk
+    expire_in: 1 day
+
+deploy:
+  stage: deploy
+  script:
+    #- ssh -p 4242 hugo@51.38.38.139 "cd release && curl --header "Private-Token:_4UE_jmT87Si3wj-Zb4L" "https://gitlab.com/api/v4/projects/12030208/repository/files/.gitignore\?ref\=master" "
+    - scp -vP 4242 build/app/outputs/apk/debug/app-debug.apk hugo@mygardenwatcher.fr:.
+    #- ssh -p 4242 hugo@51.38.38.139 "cd release && git checkout master && git pull origin master && exit"
+  only:
+    refs:
+      - master
+  when: manual
+
+
+#.setup_fastlane_android:
+#  extends: .android_key_store
+#  before_script:
+#    - cd android/
+#    - gem install bundler
+#    - bundle install
+
+#.setup_fastlane_ios:
+#  before_script:
+#    - cd ios/
+#    - gem install --user-install bundler
+#    - bundle install --path vendor/bundle
+#    - bundle exec fastlane match
+#    - export FLUTTER_APP_VERSION=$(pubver -d ../. get)
+#  tags:
+#    - ios
+#  only:
+#    - master
+
+#.android_docker_image:
+#  image: mygardenwatcher/flutter:1.12.13
+#  tags:
+#    - flutter-android
+
+#.android_key_store:
+#  extends: .android_docker_image
+#  before_script:
+#    # this will fetch the base64 encoded key store from our CI variables, decode it and place it underneath the path specified in build.gradle
+#    - echo "$PLAY_STORE_UPLOAD_KEY" | base64 --decode > android/key.jks
+#  only:
+#    - master
+
+#build:ios:
+#  stage: build
+#  script:
+#    # although fastlane also is capable of building the ipa, we are doing it with flutter to ensure it has the same versioning like the Android app
+#    - flutter build ios --release #--build-number=$CI_PIPELINE_ID
+#  artifacts:
+#    untracked: true
+#    expire_in: 1 day
+#  tags:
+#    - ios
+#  only:
+#    - master
+
+#ios_testflight_beta_deployment:
+#  stage: test_deployment
+#  extends: .setup_fastlane_ios
+#  dependencies:
+#    - build_ios
+#  script: bundle exec fastlane beta
+#
+
+#android_play_store_internal_and_alpha_deployment:
+#  stage: test_deployment
+#  extends: .setup_fastlane_android
+#  dependencies:
+#    - build_android
+#  script:
+#    - bundle exec fastlane upload_to_play_store_internal
+#    - bundle exec fastlane promote_internal_to_alpha
+#
+
+#app_store_submit_to_review:
+#  stage: productive_deployment
+#  extends: .setup_fastlane_ios
+#  dependencies:
+#    - ios_testflight_beta_deployment
+#  script: bundle exec fastlane submit_review
+#  when: manual
+#  allow_failure: false
+#
+
+#android_play_store_productive_deployment:
+#  stage: productive_deployment
+#  extends: .setup_fastlane_android
+#  dependencies:
+#    - android_play_store_internal_and_alpha_deployment
+#  script: bundle exec fastlane promote_alpha_to_production
+#  when: manual
+#  allow_failure: false
+#
+
+#tweet_about_android_updates:
+#  stage: notification
+#  extends: .setup_fastlane_android
+#  dependencies:
+#    - android_play_store_productive_deployment
+#  script: bundle exec fastlane notify_twitter_followers
+#  when: on_success
+#
+
+#tweet_about_ios_updates:
+#  stage: notification
+#  extends: .setup_fastlane_ios
+#  dependencies:
+#    - app_store_submit_to_review
+#  script: bundle exec fastlane notify_twitter_followers
+#  when: on_success
